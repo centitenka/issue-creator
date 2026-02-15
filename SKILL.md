@@ -1,0 +1,322 @@
+---
+name: issue-creator
+description: 创建结构化的 GitHub Issue，采用"人类优先、AI 友好"的双层信息架构，支持 sub-issue 拆解与自动关联。当用户说"创建 issue"、"建个需求"、"拆 issue"、"创建子 issue"、"写个 feature issue"时触发。
+---
+
+# Issue Creator
+
+创建高质量 GitHub Issue：人类能 1 分钟做决策，AI agent 能从中获取精准的问题上下文直接开工。
+
+## 核心理念
+
+### Issue 是问题描述空间，不是解决方案空间
+
+Issue 应该提供：
+- 精准的**问题/需求上下文** — 是什么、在哪里、什么时候触发、影响范围
+- 清晰的**验收标准** — 怎样算完成
+- 必要的**决策点** — 需要人类判断的选择
+
+Issue **不应该**包含：
+- ❌ 具体实现方案或代码修改建议
+- ❌ 技术路线选择或架构决策
+- ❌ "建议使用 xxx 来实现" 之类的措辞
+
+原因：Issue 的创建者不一定是最终执行者。如果创建时写入了质量不确定的实现方案，会误导后续执行的人或 AI agent。把实现判断留给执行者，基于代码现状自行决定。
+
+### "AI 友好"= 精准的定位上下文，而非实现指导
+
+AI agent 需要的是：
+- 精确的文件路径和行号
+- 当前代码的**实际行为**描述（不是猜测）
+- 可机械复现的触发步骤
+- 充分的上下文信息（来自用户工作环境和对话中的真实数据）
+
+这样任何能力水平的 AI 都能理解问题空间，而不会被一个可能错误的"建议方案"误导。
+
+### 双层信息架构
+
+```
+┌─────────────────────────────────────┐
+│  🧑 人类层（快速决策）               │  ← TL;DR + 决策点 + 验收标准
+│  一眼看懂：是什么、为什么、要不要做   │
+├─────────────────────────────────────┤
+│  🔍 定位层（精确上下文）             │  ← 文件路径 + 行号 + 当前行为 + 触发方式
+│  精准描述：在哪里、现在什么样、怎么触发│
+└─────────────────────────────────────┘
+```
+
+人类不需要翻到底部看代码细节就能做出 approve/reject 决策。AI agent 从定位层获取精确的问题坐标。
+
+---
+
+## 触发场景
+
+- `/issue-creator` 或 `/create-issue`
+- 用户说"创建 issue"、"建个需求"、"写个 enhancement issue"、"帮我拆成子 issue"
+- 用户描述了一个功能需求、优化方向、重构计划或任何需要追踪的工作项
+
+---
+
+## 执行流程
+
+### Step 1: 理解需求并收集上下文
+
+```bash
+# 仓库基本信息
+OWNER=$(gh repo view --json owner --jq '.owner.login')
+REPO=$(gh repo view --json name --jq '.name')
+
+# 近期改动和状态
+git log --oneline -10
+git status --short
+
+# 已有 issue 和 label（避免重复）
+gh issue list --state open --json number,title,labels --limit 20
+gh label list --json name --jq '.[].name'
+```
+
+从用户描述中提取：
+- **是什么** — 问题现象或需求本质
+- **为什么** — 动机、对用户/团队的价值
+- **在哪里** — 影响哪些模块/页面/功能
+- **什么时候** — 触发条件或复现步骤
+
+### Step 2: 探索相关代码，获取精准定位
+
+**这一步至关重要**。Issue 的质量取决于定位信息的精确度。
+
+```bash
+# 搜索相关代码（根据需求关键词）
+grep -rn "关键词" src/ --include="*.ts" --include="*.tsx"
+
+# 查看文件结构
+ls src/features/<domain>/
+
+# 阅读关键文件，记录行号和当前行为
+```
+
+必须记录：
+- 具体文件路径和行号
+- 当前代码的**实际行为**（而非推测）
+- 涉及的类型定义、接口、常量
+
+### Step 3: 判断是否需要拆分
+
+| 信号 | 行动 |
+|------|------|
+| 范围可被一个 AI agent session 完成 | 单个 issue |
+| 涉及多个独立模块或有先后依赖 | 拆分 sub-issues |
+| 用户明确说"拆一下" | 创建 parent + sub-issues |
+
+拆分原则：
+- 每个 sub-issue 应该是一个独立可完成的工作单元
+- 标注 sub-issues 之间的依赖关系（可并行 vs 必须串行）
+
+### Step 4: 生成 Issue 内容
+
+使用下方模板。**关键**：
+- TL;DR 必须让人类 10 秒内理解核心
+- 定位信息必须来自实际代码探索，不能猜测
+- 验收标准必须可机械检查
+
+### Step 5: 创建 Issue 并关联
+
+```bash
+# 创建 issue（用 HEREDOC 确保格式正确）
+gh issue create \
+  --repo "$OWNER/$REPO" \
+  --title "Issue 标题" \
+  --label "enhancement" \
+  --body "$(cat <<'ISSUE_EOF'
+[Issue body]
+ISSUE_EOF
+)"
+```
+
+如果有 sub-issues：
+
+```bash
+# 1. 创建子 issue 并捕获 URL
+SUB_URL=$(gh issue create --repo "$OWNER/$REPO" --title "..." --label "..." --body "..." 2>&1)
+SUB_NUMBER=$(echo "$SUB_URL" | grep -oE '[0-9]+$')
+
+# 2. 获取 node ID
+PARENT_ID=$(gh issue view <parent_number> --repo "$OWNER/$REPO" --json id --jq ".id")
+CHILD_ID=$(gh issue view "$SUB_NUMBER" --repo "$OWNER/$REPO" --json id --jq ".id")
+
+# 3. 关联 sub-issue（GraphQL mutation）
+gh api graphql -f query="
+  mutation {
+    addSubIssue(input: {
+      issueId: \"$PARENT_ID\",
+      subIssueId: \"$CHILD_ID\"
+    }) {
+      issue { title number }
+      subIssue { title number }
+    }
+  }"
+```
+
+### Step 6: 输出摘要
+
+创建完成后，向用户报告：
+- 创建了哪些 issue（编号 + 链接）
+- sub-issue 关联状态
+- 建议的工作顺序（如有依赖关系）
+
+---
+
+## Issue 模板
+
+### 单一 Issue
+
+```markdown
+## TL;DR
+
+[1-2 句话。人类读完这段就能决定要不要做。]
+
+## 决策点
+
+> 需要人类判断的选择。没有则删除本节。
+
+- [ ] [选择 A vs 选择 B：简述权衡]
+
+## 问题/需求描述
+
+[3-5 句话描述问题现象或需求背景。聚焦"是什么"和"为什么"。]
+
+## 当前行为
+
+[精确描述当前代码的实际行为。基于代码阅读而非猜测。]
+
+## 期望行为
+
+[精确描述完成后应该是什么样。]
+
+---
+
+<!-- 以下为精确定位信息 -->
+
+## 影响范围
+
+| 文件 | 行号 | 当前状态 |
+|------|------|---------|
+| `src/features/xxx/pages/XxxPage.tsx` | 42-58 | [当前代码在这些行做了什么] |
+| `src/lib/xxx.ts` | 15 | [当前状态描述] |
+
+## 触发/复现方式
+
+1. [具体步骤 1]
+2. [具体步骤 2]
+3. [观察到的现象]
+
+## 验收标准
+
+- [ ] [可检查的标准 1]
+- [ ] [可检查的标准 2]
+- [ ] `pnpm run build` 通过，无类型错误
+
+## 关联
+
+- 相关 Issue: #N
+- 依赖: #M（需先完成）
+```
+
+### Parent Issue（带 Sub-issues）
+
+```markdown
+## TL;DR
+
+[1-2 句话概括整体目标]
+
+## 概述
+
+[3-5 句话描述问题/需求的完整背景]
+
+## Sub-issues 总览
+
+| # | 标题 | 依赖 |
+|---|------|------|
+| 1 | [子任务 1] | 无 |
+| 2 | [子任务 2] | 无 |
+| 3 | [子任务 3] | #1 完成后 |
+
+## 依赖关系
+
+```
+Sub-Issue 1  ──┐
+Sub-Issue 2  ──┼──→ 可并行
+               │
+               ▼
+Sub-Issue 3  ──→ 依赖 Sub-Issue 1
+```
+
+## 验收标准（整体）
+
+- [ ] 所有 sub-issues 完成
+- [ ] [整体集成验证标准]
+```
+
+---
+
+## 标签选择
+
+根据内容自动选择合适的标签：
+
+| 类型 | 标签 |
+|------|------|
+| 新功能 | `enhancement` |
+| Bug 修复 | `bug` |
+| UI/视觉 | `enhancement` + `design`（如有） |
+| 文档 | `documentation` |
+| 适合新人 | 追加 `good first issue` |
+
+如果仓库中没有需要的标签，先用 `gh label create` 创建。
+
+## 标题格式
+
+```
+[模块] 动词短语描述
+```
+
+示例：
+- `[Hub] 独立化色彩体系，消除 primary 色污染`
+- `[Dashboard] 马赛克墙触摸设备长按无响应`
+- `[Auth] 邀请码注册后未自动跳转到仪表板`
+
+---
+
+## 质量自检
+
+- [ ] TL;DR ≤ 2 句，人类读完能做决策
+- [ ] 没有包含实现方案或代码修改建议
+- [ ] 影响范围中的文件路径和行号来自实际代码探索
+- [ ] 当前行为描述基于代码阅读，不是猜测
+- [ ] 每条验收标准可被检查（CI / review / 自测）
+- [ ] Sub-issues 之间的依赖关系已标注（如有）
+- [ ] 没有包含敏感信息（token/key/password）
+
+---
+
+## 示例
+
+### 示例 1: 简单功能需求
+
+**用户说：** "Hub 页面的点赞加个动画效果"
+
+**执行：**
+1. 搜索 `HubPage.tsx` 中点赞相关代码
+2. 定位点赞按钮和 `toggleLike` 函数的行号
+3. 描述当前行为（点击后立即切换状态，无过渡）
+4. 创建单个 issue
+
+### 示例 2: 需要拆分的大需求
+
+**用户说：** "把认证系统从 mock 切换到 Supabase，帮我拆一下"
+
+**执行：**
+1. 分析 `dataApi.ts`（mock）和 `api.ts`（Supabase）的接口差异
+2. 列出所有使用 `authApi` 的组件和行号
+3. 拆分为 parent issue + 3-4 个 sub-issues
+4. 创建并关联所有 issues
+5. 报告创建结果和依赖关系
