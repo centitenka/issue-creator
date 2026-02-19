@@ -31,8 +31,6 @@ AI agent 需要的是：
 - 可机械复现的触发步骤
 - 充分的上下文信息（来自用户工作环境和对话中的真实数据）
 
-这样任何能力水平的 AI 都能理解问题空间，而不会被一个可能错误的"建议方案"误导。
-
 ### 双层信息架构
 
 ```
@@ -44,8 +42,6 @@ AI agent 需要的是：
 │  精准描述：在哪里、现在什么样、怎么触发│
 └─────────────────────────────────────┘
 ```
-
-人类不需要翻到底部看代码细节就能做出 approve/reject 决策。AI agent 从定位层获取精确的问题坐标。
 
 ---
 
@@ -75,14 +71,9 @@ gh issue list --state open --json number,title,labels --limit 20
 gh label list --json name --jq '.[].name'
 ```
 
-上下文不仅是仓库和 git 信息。**回顾当前对话的完整上下文**，提取用户在对话中已经提供的关键信息：
+**同时回顾当前对话上下文**——用户提到的现象、截图、报错、设计决策、优先级、已确认的结论等。不要重复提问已回答过的问题。
 
-- 用户提到的具体现象、截图、报错信息、操作路径
-- 对话中讨论过的设计决策、技术选型、取舍理由
-- 用户表达的优先级、紧急程度、背景动机
-- 之前对话轮次中已经确认的结论（不要重复提问已回答过的问题）
-
-从以上上下文中提炼：
+从仓库信息和对话上下文中提炼：
 - **是什么** — 问题现象或需求本质
 - **为什么** — 动机、对用户/团队的价值
 - **在哪里** — 影响哪些模块/页面/功能
@@ -97,8 +88,6 @@ gh label list --json name --jq '.[].name'
 | 简单功能 / `good first vibe` | 涉及的**模块或功能域** | "点赞相关逻辑"、"用户认证模块" |
 | 中等复杂度 | 相关**文件路径** + 当前行为概述 | "`src/features/hub/` 下的点赞组件，目前无动画" |
 | 复杂 bug / 难复现问题 | 精确**文件路径 + 行号** + 当前行为 | "`src/lib/auth.ts:42-58` 中 token 刷新逻辑在并发时竞态" |
-
-简单 issue 写死路径行号反而会限制执行者的探索空间——代码随时在变，过时的行号是误导而非帮助。
 
 探索代码时记录：
 - 涉及的模块/功能域（必须）
@@ -143,7 +132,6 @@ gh label list --json name --jq '.[].name'
 ### Step 6: 创建 Issue 并关联
 
 ```bash
-# 创建 issue（用 HEREDOC 确保格式正确）
 gh issue create \
   --repo "$OWNER/$REPO" \
   --title "Issue 标题" \
@@ -154,18 +142,14 @@ ISSUE_EOF
 )"
 ```
 
-如果有 sub-issues：
+Sub-issues 关联：
 
 ```bash
-# 1. 创建子 issue 并捕获 URL
 SUB_URL=$(gh issue create --repo "$OWNER/$REPO" --title "..." --label "..." --body "..." 2>&1)
 SUB_NUMBER=$(echo "$SUB_URL" | grep -oE '[0-9]+$')
-
-# 2. 获取 node ID
 PARENT_ID=$(gh issue view <parent_number> --repo "$OWNER/$REPO" --json id --jq ".id")
 CHILD_ID=$(gh issue view "$SUB_NUMBER" --repo "$OWNER/$REPO" --json id --jq ".id")
 
-# 3. 关联 sub-issue（GraphQL mutation）
 gh api graphql -f query="
   mutation {
     addSubIssue(input: {
@@ -344,18 +328,16 @@ Sub-Issue 3  ──→ 依赖 Sub-Issue 1
 **用户说：** "Hub 页面的点赞加个动画效果"
 
 **执行：**
-1. 搜索 `HubPage.tsx` 中点赞相关代码
-2. 定位点赞按钮和 `toggleLike` 函数的行号
-3. 描述当前行为（点击后立即切换状态，无过渡）
-4. 创建单个 issue
+1. 搜索点赞相关代码，记录模块和当前行为（点击后立即切换状态，无过渡）
+2. 向用户确认动画类型偏好（缩放、弹跳、粒子等）
+3. 创建单个 issue，标注 `good first vibe`
 
 ### 示例 2: 需要拆分的大需求
 
 **用户说：** "把认证系统从 mock 切换到 Supabase，帮我拆一下"
 
 **执行：**
-1. 分析 `dataApi.ts`（mock）和 `api.ts`（Supabase）的接口差异
-2. 列出所有使用 `authApi` 的组件和行号
-3. 拆分为 parent issue + 3-4 个 sub-issues
-4. 创建并关联所有 issues
-5. 报告创建结果和依赖关系
+1. 分析 mock 和 Supabase 接口差异，列出涉及的模块
+2. 向用户确认拆分方案和优先级
+3. 创建 parent + sub-issues 并关联
+4. 报告依赖关系和建议工作顺序
