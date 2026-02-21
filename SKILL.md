@@ -79,6 +79,23 @@ gh label list --json name --jq '.[].name'
 - **在哪里** — 影响哪些模块/页面/功能
 - **什么时候** — 触发条件或复现步骤
 
+### Step 1.5: 查重
+
+扫描 Step 1 拿到的 open issue 标题，若存在意图相似的条目：
+
+```bash
+# 获取疑似重复 issue 的正文
+gh issue view <number> --repo "$OWNER/$REPO" --json title,body,labels,assignees
+```
+
+对比当前需求与已有 issue 的**核心意图**（不是字面措辞），判断：
+
+| 判定 | 行动 |
+|------|------|
+| 完全重复 | 停止创建，向用户报告已有 issue 编号和链接 |
+| 部分重叠（范围更大或角度不同） | 向用户说明重叠点，询问：补充到已有 issue / 创建新 issue 并关联 / 取消 |
+| 无重复 | 继续 Step 2 |
+
 ### Step 2: 探索相关代码，获取精准定位
 
 定位信息的详细程度应与 Issue 复杂度匹配，避免过量信息变成噪音：
